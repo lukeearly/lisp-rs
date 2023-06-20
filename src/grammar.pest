@@ -1,0 +1,46 @@
+top_level = _{ SOI ~ sexp ~ EOI }
+
+sexp = _{ plist | number | string | symbol | quote }
+quote = { "'" ~ quotable }
+quotable = _{ plist | symbol | quote }
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+
+plist = _{ "(" ~ list ~ ")" }
+list = _{ custom_term_list | nil_term_list }
+nil_term_list = { sexp* }
+custom_term_list = { sexp* ~ "." ~ sexp }
+
+symbol = ${ LETTER+ }
+
+string = { "\"" ~ inner ~ "\"" }
+inner = @{ char* }
+char = {
+    !("\"" | "\\") ~ ANY
+    | "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t")
+    | "\\" ~ ("u" ~ ASCII_HEX_DIGIT{4})
+}
+
+number = _{ octal | hexadecimal | binary | decimal }
+
+decimal = @{
+    "-"?
+    ~ ("0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT*)
+    ~ ("." ~ ASCII_DIGIT*)?
+    ~ (^"e" ~ ("+" | "-")? ~ ASCII_DIGIT+)?
+}
+
+octal = @{
+    "-"?
+    ~ ("0" ~ ASCII_DIGIT+)
+}
+
+hexadecimal = @{
+    "-"?
+    ~ ("0x" ~ ASCII_DIGIT+)
+}
+
+binary = @{
+    "-"?
+    ~ ("0b" ~ ASCII_DIGIT+)
+}	
