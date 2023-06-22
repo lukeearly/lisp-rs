@@ -38,15 +38,11 @@ impl Display for PackedPtr {
                 // let slice = unsafe { slice::from_raw_parts(sym.start, sym.len) };
                 write!(f, "{}", sym.to_string())
             }
-            String(ptr) => {
-                let sym = unsafe { *(ptr.as_ptr()) };
-                let slice = unsafe { slice::from_raw_parts(sym.start, sym.len) };
-                write!(f, "\"{}\"", string::String::from_utf8_lossy(slice))
-            }
             Nil => {
                 write!(f, "()")
             }
-            Builtin(_) => write!(f, "<BUILTIN>"),
+            Function(_) => write!(f, "<BUILTIN>"),
+            Object(_) => write!(f, "<OBJECT>"),
         }
     }
 }

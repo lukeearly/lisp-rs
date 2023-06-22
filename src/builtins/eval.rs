@@ -1,67 +1,85 @@
+use crate::builtins::func::rust_map_eval;
 use crate::builtins::unpack::unpack_cons;
 use crate::value::Value;
 use crate::{def_builtin, let_slot};
 
 use super::alist::assq;
+use super::closure::rust_closure_apply;
 use super::types::rust::*;
 use super::BuiltinError;
 
-def_builtin!(eval(ctx, out, args, ext_scope) [code, int_scope] {
-    // unsafe { println!("{}", int_scope.unguard()) }
+def_builtin!(eval(ctx, out) [code, scope: listp] {
     match code.unpack() {
         Value::Cons(ptr) => {
             if !proper_list_p(code) {
                 return Err(BuiltinError::BadArgument("code contains an improper list".into()))
             }
 
-            let left = &ptr.first;
+            let left = ptr.first;
+            let right = ptr.rest;
 
-            if *left == ctx.common_symbols.quote {
-                return Ok(out.root(&unpack_cons(&ptr.rest).map_err(|_| BuiltinError::NotEnoughArguments { string: "quote".into(), expected: 1, provided: 0 })?.first));
+            if left == ctx.common_symbols.quote {
+                return Ok(out.root(&unpack_cons(right).map_err(|_| BuiltinError::NotEnoughArguments { string: "quote".into(), expected: 1, provided: 0 })?.first));
             }
 
-            let_slot!(ctx:left_eval_args);
-            let left_eval_args = left_eval_args.nil();
-            let left_eval_args = left_eval_args.prepend(ctx, &int_scope);
-            let left_eval_args = left_eval_args.prepend(ctx, left);
+            let_slot!(ctx:left_out);
+            let left_out = rust_eval(ctx, left_out, left, scope)?;
 
-            let_slot!(ctx:left_eval_out);
-            let left_eval_out = eval(ctx, left_eval_out, left_eval_args.value(), None)?;
-            
-            match left_eval_out.value().unpack() {
-                // Value::Builtin(fn_ptr) => fn_ptr(&ctx, out, ptr.rest.clone()),
-                Value::Builtin(fn_ptr) => fn_ptr(&ctx, out, ptr.rest.clone(), Some(int_scope)),
-                _ => Err(BuiltinError::NotCallable)
+            if let Value::Cons(ptr) = left_out.value().unpack() {
+                if ptr.first == ctx.common_symbols._macro {
+                    let_slot!(ctx:macro_arg);
+                    let arg_root = macro_arg.root(&right).prepend(ctx, &scope);
+                    return rust_apply(ctx, out, ptr.rest, arg_root.value());
+                }
             }
 
-            // } else if *left == ctx.common_symbols.first {
-            //     return first(ctx, out, &ptr.rest);
-            // } else if *left == ctx.common_symbols.rest {
-            //     return rest(ctx, out, &ptr.rest);
-            // }
+            let_slot!(ctx:map_out);
+            let map_out = rust_map_eval(ctx, map_out, scope, right)?;
+
+            rust_apply(ctx, out, left_out.value(), map_out.value())
         }
         Value::Symbol(ptr) => {
             let_slot!(ctx:assq_args);
             let_slot!(ctx:assq_code);
 
-            let assq_code = assq_code.root(&code).quote(ctx);
+            let assq_code = assq_code.root(&code);
 
-            let assq_args = assq_args.root(&int_scope).quote(ctx).singleton(ctx);
+            let assq_args = assq_args.root(&scope).singleton(ctx);
             let assq_args = assq_args.prepend(ctx, &assq_code.value());
             drop(assq_code);
 
             let_slot!(ctx:assq_out);
-            let assq_out = assq(ctx, assq_out, assq_args.value(), None)?;
+            let assq_out = assq(ctx, assq_out, assq_args.value())?;
             match assq_out.value().unpack() {
                 Value::Cons(ptr) => Ok(out.root(&ptr.rest)),
                 _ => Err(BuiltinError::UndefinedSymbol(ptr.to_string()))
             }
         }
-        Value::Nil | Value::Integer(_) | Value::String(_) | Value::Builtin(_) => {
+        Value::Nil | Value::Integer(_) | Value::Function(_) | Value::Object(_) => {
             // self-evaluating forms
             Ok(out.root(&code))
         }
     }
+});
+
+def_builtin!(apply(ctx, out) [left, &rest right] {
+    match left.unpack() {
+        Value::Function(fn_ptr) => fn_ptr(&ctx, out, right.clone()),
+        Value::Cons(cons) => {
+            if cons.first == ctx.common_symbols.closure {
+                rust_closure_apply(ctx, out, cons.rest, right)
+            } else {
+                Err(BuiltinError::NotCallable)
+            }
+        },
+        _ => Err(BuiltinError::NotCallable)
+    }
+
+    // } else if *left == ctx.common_symbols.first {
+    //     return first(ctx, out, &ptr.rest);
+    // } else if *left == ctx.common_symbols.rest {
+    //     return rest(ctx, out, &ptr.rest);
+    // }
 });
 
 #[cfg(test)]
@@ -84,7 +102,7 @@ mod test {
             let $args = { $args_block };
 
             let_slot!(ctx: $out);
-            let $out = eval(&$ctx, $out, $args.value(), None).unwrap();
+            let $out = eval(&$ctx, $out, $args.value()).unwrap();
 
             $out_block
         };

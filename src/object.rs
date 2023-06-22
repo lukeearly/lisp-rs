@@ -7,7 +7,7 @@ use std::{
     slice, string,
 };
 
-use crate::builtins::BuiltinFn;
+use crate::builtins::{BuiltinFunction, BuiltinMacro};
 
 pub const OBJECT_ALIGNMENT: usize = 8;
 
@@ -22,7 +22,8 @@ pub union PackedPtr {
     integer: isize,
     cons: NonNull<RawCons>,
     lstr: NonNull<LString>,
-    builtin: BuiltinFn,
+    mac: BuiltinMacro,
+    fun: BuiltinFunction,
 }
 
 impl PackedPtr {
@@ -42,16 +43,16 @@ impl PackedPtr {
         unsafe { PackedPtr { cons: ptr }.add_tag(TagType::Cons as usize) }
     }
 
+    pub fn obj_ptr(ptr: NonNull<RawCons>) -> Self {
+        unsafe { PackedPtr { cons: ptr }.add_tag(TagType::Object as usize) }
+    }
+
     pub fn sym_ptr(ptr: NonNull<LString>) -> Self {
         unsafe { PackedPtr { lstr: ptr }.add_tag(TagType::Symbol as usize) }
     }
 
-    pub fn str_ptr(ptr: NonNull<LString>) -> Self {
-        unsafe { PackedPtr { lstr: ptr }.add_tag(TagType::String as usize) }
-    }
-
-    pub fn builtin_ptr(ptr: BuiltinFn) -> Self {
-        unsafe { PackedPtr { builtin: ptr }.add_tag(TagType::Builtin as usize) }
+    pub fn fun_ptr(ptr: BuiltinFunction) -> Self {
+        unsafe { PackedPtr { fun: ptr }.add_tag(TagType::Function as usize) }
     }
 
     unsafe fn add_tag(&self, tag: usize) -> Self {
@@ -71,12 +72,16 @@ impl PackedPtr {
         PackedPtr { tag: self.tag & !7 }.cons
     }
 
-    unsafe fn get_str_ptr(&self) -> NonNull<LString> {
+    unsafe fn get_sym_ptr(&self) -> NonNull<LString> {
         PackedPtr { tag: self.tag & !7 }.lstr
     }
 
-    unsafe fn get_builtin_ptr(&self) -> BuiltinFn {
-        PackedPtr { tag: self.tag & !7 }.builtin
+    unsafe fn get_fun_ptr(&self) -> BuiltinFunction {
+        PackedPtr { tag: self.tag & !7 }.fun
+    }
+
+    unsafe fn get_macro_ptr(&self) -> BuiltinMacro {
+        PackedPtr { tag: self.tag & !7 }.mac
     }
 
     pub fn tag_type(&self) -> TagType {
@@ -84,10 +89,10 @@ impl PackedPtr {
         match tag {
             t if (t & 3) == TagType::Integer as usize => TagType::Integer,
             t if (t & 7) == TagType::Cons as usize => TagType::Cons,
+            t if (t & 7) == TagType::Object as usize => TagType::Object,
             t if t == 0 as usize => TagType::Nil,
             t if (t & 7) == TagType::Symbol as usize => TagType::Symbol,
-            t if (t & 7) == TagType::String as usize => TagType::String,
-            t if (t & 7) == TagType::Builtin as usize => TagType::Builtin,
+            t if (t & 7) == TagType::Function as usize => TagType::Function,
             _ => panic!("Heap corrupted"),
         }
     }
@@ -97,10 +102,10 @@ impl PackedPtr {
             match self.tag_type() {
                 TagType::Integer => UnpackedPtr::Integer(self.get_integer()),
                 TagType::Cons => UnpackedPtr::Cons(self.get_cons_ptr()),
+                TagType::Object => UnpackedPtr::Object(self.get_cons_ptr()),
                 TagType::Nil => UnpackedPtr::Nil,
-                TagType::Symbol => UnpackedPtr::Symbol(self.get_str_ptr()),
-                TagType::String => UnpackedPtr::String(self.get_str_ptr()),
-                TagType::Builtin => UnpackedPtr::Builtin(self.get_builtin_ptr()),
+                TagType::Symbol => UnpackedPtr::Symbol(self.get_sym_ptr()),
+                TagType::Function => UnpackedPtr::Function(self.get_fun_ptr()),
                 _ => panic!("Heap corrupted"),
             }
         }
@@ -114,6 +119,10 @@ impl PackedPtr {
                     NonNull::new_unchecked(ptr.as_ptr() as *mut u8),
                     size_of::<crate::object::RawCons>(),
                 )],
+                Object(ptr) => vec![(
+                    NonNull::new_unchecked(ptr.as_ptr() as *mut u8),
+                    size_of::<crate::object::RawCons>(),
+                )],
                 _ => vec![],
             }
         }
@@ -124,6 +133,14 @@ impl PackedPtr {
         unsafe {
             match self.unpack() {
                 Cons(ptr) => {
+                    let cons = *ptr.as_ptr();
+
+                    vec![
+                        NonNull::new_unchecked(&cons.first as *const PackedPtr as *mut PackedPtr),
+                        NonNull::new_unchecked(&cons.rest as *const PackedPtr as *mut PackedPtr),
+                    ]
+                }
+                Object(ptr) => {
                     let cons = *ptr.as_ptr();
 
                     vec![
@@ -164,9 +181,8 @@ impl PartialEq for PackedPtr {
 pub enum TagType {
     Symbol = 0b000,
     Cons = 0b001,
-    String = 0b010,
+    Function = 0b010,
     Integer = 0b011,
-    Builtin = 0b110,
     // Vector,
     // Bigint,
     // Closure,
@@ -180,10 +196,10 @@ pub enum TagType {
 pub enum UnpackedPtr {
     Integer(isize),
     Cons(NonNull<RawCons>),
+    Object(NonNull<RawCons>),
     Nil,
     Symbol(NonNull<LString>),
-    String(NonNull<LString>),
-    Builtin(BuiltinFn),
+    Function(BuiltinFunction),
 }
 
 impl UnpackedPtr {
@@ -191,10 +207,10 @@ impl UnpackedPtr {
         match *self {
             UnpackedPtr::Integer(n) => PackedPtr::integer(n),
             UnpackedPtr::Cons(ptr) => PackedPtr::cons_ptr(ptr),
+            UnpackedPtr::Object(ptr) => PackedPtr::obj_ptr(ptr),
             UnpackedPtr::Nil => PackedPtr::nil(),
             UnpackedPtr::Symbol(ptr) => PackedPtr::sym_ptr(ptr),
-            UnpackedPtr::String(ptr) => PackedPtr::str_ptr(ptr),
-            UnpackedPtr::Builtin(ptr) => PackedPtr::builtin_ptr(ptr),
+            UnpackedPtr::Function(ptr) => PackedPtr::fun_ptr(ptr),
         }
     }
 }
@@ -232,6 +248,11 @@ impl ToString for LString {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_alignment() {
+        assert_eq!(size_of::<PackedPtr>(), OBJECT_ALIGNMENT)
+    }
 
     #[test]
     fn test_positive_integer() {

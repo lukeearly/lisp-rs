@@ -70,7 +70,7 @@ impl Block {
             ptr: ptr as *mut u8,
         };
         let offset_in_block = obj as usize - ptr;
-        let line = offset_in_block / IMMIX_LINE_SIZE * IMMIX_LINE_SIZE;
+        let line = offset_in_block / IMMIX_LINE_SIZE;
 
         let offset_in_line = offset_in_block - IMMIX_LINE_SIZE * line;
         (block, line, offset_in_line)

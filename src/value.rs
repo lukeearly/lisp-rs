@@ -1,7 +1,7 @@
 use std::{marker::PhantomData, ops::Deref, ptr::NonNull};
 
 use crate::{
-    builtins::BuiltinFn,
+    builtins::{BuiltinFunction, BuiltinMacro},
     object::{self, LString, PackedPtr, UnpackedPtr},
     root::Gc,
 };
@@ -11,7 +11,7 @@ use crate::{
 //     _phantom: PhantomData<T>
 // }
 
-#[derive(PartialEq, Eq, Clone)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 pub struct PackedValue<'guard> {
     ptr: PackedPtr,
     _phantom: PhantomData<&'guard ()>,
@@ -38,9 +38,9 @@ impl<'guard> PackedValue<'guard> {
 pub enum Value<'guard> {
     Integer(isize),
     Cons(Gc<'guard, Cons<'guard>>),
+    Object(Gc<'guard, Cons<'guard>>),
     Symbol(Gc<'guard, LString>),
-    String(Gc<'guard, LString>),
-    Builtin(BuiltinFn),
+    Function(BuiltinFunction),
     Nil,
 }
 
@@ -51,10 +51,12 @@ impl<'guard> Value<'guard> {
             UnpackedPtr::Cons(ptr) => Self::Cons(Gc::new(
                 NonNull::new_unchecked(ptr.as_ptr() as *mut Cons).as_ref(),
             )),
+            UnpackedPtr::Object(ptr) => Self::Object(Gc::new(
+                NonNull::new_unchecked(ptr.as_ptr() as *mut Cons).as_ref(),
+            )),
             UnpackedPtr::Nil => Self::Nil,
             UnpackedPtr::Symbol(ptr) => Self::Symbol(Gc::new(ptr.as_ref())),
-            UnpackedPtr::String(ptr) => Self::String(Gc::new(ptr.as_ref())),
-            UnpackedPtr::Builtin(ptr) => Self::Builtin(ptr),
+            UnpackedPtr::Function(ptr) => Self::Function(ptr),
         }
     }
 
@@ -64,10 +66,12 @@ impl<'guard> Value<'guard> {
             Value::Cons(ptr) => UnpackedPtr::Cons(NonNull::new_unchecked(
                 ptr.as_raw().as_ptr() as *mut object::RawCons
             )),
+            Value::Object(ptr) => UnpackedPtr::Object(NonNull::new_unchecked(
+                ptr.as_raw().as_ptr() as *mut object::RawCons,
+            )),
             Value::Symbol(ptr) => UnpackedPtr::Symbol(ptr.as_raw()),
-            Value::String(ptr) => UnpackedPtr::String(ptr.as_raw()),
+            Value::Function(ptr) => UnpackedPtr::Function(*ptr),
             Value::Nil => UnpackedPtr::Nil,
-            Value::Builtin(ptr) => UnpackedPtr::Builtin(*ptr),
         }
     }
 

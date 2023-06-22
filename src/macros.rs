@@ -19,7 +19,7 @@ macro_rules! let_slot {
 }
 
 #[macro_export]
-macro_rules! replace_expr {
+macro_rules! drop_first {
     ($_t:tt $sub:expr) => {
         $sub
     };
@@ -27,48 +27,67 @@ macro_rules! replace_expr {
 
 #[macro_export]
 macro_rules! def_builtin {
-    ($name:ident($ctx:ident, $out:ident, $args:ident, $scope:ident) $([$($arg_name:ident $(<- $code_name:ident)? $(: $arg_type:ident)?),*$(& $rest:ident)?])? $block:block) => {
-        #[allow(unused_mut)]
-        #[allow(unused_assignments)]
-        pub fn $name<'o>($ctx: &'o crate::thread::MutatorCtx, mut $out: crate::root::Slot<'o>, $args: crate::value::PackedValue<'o>, $scope: Option<crate::value::PackedValue<'o>>) -> crate::builtins::BuiltinResult<'o> {
-            let arg_expected = 0usize $($(
-                + crate::replace_expr!($arg_name 1usize)
-            )*)?;
-            let mut arg_idx = 0;
-            let mut remaining_args = &$args;
-            $($(
-                let cons = crate::builtins::unpack::unpack_cons(remaining_args).map_err(|_| crate::builtins::BuiltinError::NotEnoughArguments { string: stringify!($name).into(),expected: arg_expected, provided: arg_idx })?;
-                arg_idx += 1;
-                let $arg_name = cons.first.clone();
+    ($name:ident ($($ctx:ident)?, $($out:ident)?) $([$($arg_name:ident $(<- $scope:ident)? $(: $arg_type:ident)? $(| $unpack_to:ident)?),*$(,)?$(&rest $rest:ident)?])? $block:block) => {
+        paste::paste!{
+            #[allow(unused_assignments)]
+            #[allow(unused_mut)]
+            #[allow(unused_variables)]
+            pub fn $name<'o, 'a>(ctx: &'o crate::thread::MutatorCtx, out: crate::root::Slot<'o>, args: crate::value::PackedValue<'a>) -> crate::builtins::BuiltinResult<'o> {
+                let arg_expected = 0usize $($(
+                    + crate::drop_first!($arg_name 1usize)
+                )*)?;
                 $(
-                    let $code_name = $arg_name;
-                    crate::let_slot!($ctx:eval_out);
-                    crate::let_slot!($ctx:eval_args);
-                    let eval_args = eval_args.root(&$scope.clone().unwrap_or(crate::value::Value::Nil.pack())).singleton($ctx).prepend($ctx, &$code_name);
-                    let eval_out = crate::builtins::eval::eval($ctx, eval_out, eval_args.value(), None)?;
-                    let $arg_name = eval_out.value();
-                )?
-                $(
-                    if !crate::builtins::types::rust::$arg_type($arg_name.clone()) {
-                        return Err(crate::builtins::BuiltinError::BadArgument(format!("{} is not {}", unsafe { $arg_name.unguard() }, stringify!($arg_type))));
+                    let mut arg_idx = 0;
+                    let mut remaining_args = args;
+                    $(
+                        let cons = crate::builtins::unpack::unpack_cons(remaining_args).map_err(|_| crate::builtins::BuiltinError::NotEnoughArguments { string: stringify!($name).into(),expected: arg_expected, provided: arg_idx })?;
+                        arg_idx += 1;
+                        let $arg_name = cons.first;
+                        $(
+                            crate::let_slot!(ctx:root);
+                            let root = crate::builtins::eval::rust_eval(ctx, root, $arg_name, $scope)?;
+                            let $arg_name = root.value();
+                        )?
+                        remaining_args = cons.rest;
+                    )*
+                    $(
+                        let $rest = remaining_args;
+                        remaining_args = crate::value::Value::Nil.pack();
+                    )?
+                    match remaining_args.unpack() {
+                        crate::value::Value::Nil => (),
+                        _ => return Err(crate::builtins::BuiltinError::TooManyArguments { string: stringify!($name).into(), expected: arg_expected })
                     }
                 )?
-                remaining_args = &cons.rest;
-            )*
-                $(
-                    let $rest = remaining_args;
-                    let nil = crate::value::Value::Nil.pack();
-                    remaining_args = &nil;
-                )?
-            )?
-            match remaining_args.unpack() {
-                crate::value::Value::Nil => (),
-                _ => return Err(crate::builtins::BuiltinError::TooManyArguments { string: stringify!($name).into(), expected: arg_expected })
+
+                [<rust_ $name>](
+                    $(crate::drop_first!($ctx ctx),)?
+                    $(crate::drop_first!($out out),)?
+                    $($($arg_name,)* $($rest)?)?
+                )
             }
-            drop(arg_expected);
-            drop(arg_idx);
-            drop(remaining_args);
-            $block
+
+            #[allow(unused_mut)]
+            pub fn [<rust_ $name>]<'o, 'a>($($ctx: &'o crate::thread::MutatorCtx,)? $(mut $out: crate::root::Slot<'o>,)? $($(
+                mut $arg_name: crate::value::PackedValue<'a>,
+            )* $($rest: crate::value::PackedValue<'a>,)?)?) -> crate::builtins::BuiltinResult<'o> {
+                #[warn(unused_assignments)]
+                #[warn(unused_mut)]
+                #[warn(unused_variables)]
+                $(
+                    $(
+                        $(
+                            if !crate::builtins::types::rust::$arg_type($arg_name) {
+                                return Err(crate::builtins::BuiltinError::BadArgument(format!("{}: {} is not {}", stringify!($name), unsafe { $arg_name.unguard() }, stringify!($arg_type))));
+                            }
+                        )?
+                        $(
+                            let mut $arg_name = crate::builtins::unpack::[<unpack_ $unpack_to>]($arg_name).map_err(|_| crate::builtins::BuiltinError::BadArgument(format!("{}: {} is not {}", stringify!($name), unsafe { $arg_name.unguard() }, stringify!($unpack_to))))?;
+                        )?
+                    )*
+                )?
+                { $block }
+            }
         }
     }
 }

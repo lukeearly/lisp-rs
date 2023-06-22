@@ -2,7 +2,7 @@ use std::{cell::Cell, marker::PhantomData, ops::Deref, pin::Pin, ptr::NonNull};
 
 use crate::{
     alloc::ImmixMutator,
-    builtins::BuiltinFn,
+    builtins::{BuiltinFunction, BuiltinMacro},
     heap::LAlloc,
     let_slot,
     linked_list::{LinkedList, LinkedListIter, LinkedListNode},
@@ -71,8 +71,8 @@ impl<'slot> Slot<'slot> {
         self.root_raw(PackedPtr::nil())
     }
 
-    pub unsafe fn builtin(self, fn_ptr: BuiltinFn) -> Root<'slot> {
-        self.root_raw(PackedPtr::builtin_ptr(fn_ptr))
+    pub unsafe fn function(self, fn_ptr: BuiltinFunction) -> Root<'slot> {
+        self.root_raw(PackedPtr::fun_ptr(fn_ptr))
     }
 
     pub fn singleton<'guard>(self, ctx: &MutatorCtx, ptr: &PackedValue<'guard>) -> Root<'slot> {
@@ -134,6 +134,10 @@ impl<'slot> Root<'slot> {
 
     pub fn quote(self, ctx: &MutatorCtx) -> Root<'slot> {
         self.singleton(ctx).prepend(ctx, &ctx.common_symbols.quote)
+    }
+
+    pub fn _macro(self, ctx: &MutatorCtx) -> Root<'slot> {
+        self.prepend(ctx, &ctx.common_symbols._macro)
     }
 }
 

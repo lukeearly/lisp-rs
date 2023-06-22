@@ -7,11 +7,9 @@ use crate::{
     value::{PackedValue, Value},
 };
 
-use super::{unpack::unpack_cons, BuiltinError};
-
 macro_rules! generate_predicate {
     ($($name:ident),*) => {
-        $(def_builtin! {$name(ctx, out, args, scope) [arg <- code] {
+        $(def_builtin! {$name(ctx, out) [arg] {
             if rust::$name(arg) {
                 Ok(out.root(&ctx.common_symbols.t))
             } else {
@@ -53,9 +51,9 @@ pub mod rust {
     }
 
     pub fn proper_list_p(arg: PackedValue) -> bool {
-        let mut res = unpack_cons(&arg);
+        let mut res = unpack_cons(arg);
         while let Ok(ref pair) = res {
-            res = unpack_cons(&pair.rest);
+            res = unpack_cons(pair.rest);
         }
 
         if unsafe { res.unwrap_err_unchecked() == TagType::Nil } {
@@ -81,7 +79,7 @@ mod test {
         let ctx = crate::thread::MutatorCtx::new_from_global(global);
 
         let_slot!(ctx: args);
-        let args = args.nil().singleton(&ctx);
+        let args = args.nil().quote(&ctx).singleton(&ctx);
 
         test_types(&ctx, args, [true, false, true, true]);
     }
@@ -94,6 +92,7 @@ mod test {
         let_slot!(ctx: args);
         let args = args
             .alloc_cons(&ctx, Cons::new(Value::Integer(2), Value::Integer(3)))
+            .quote(&ctx)
             .singleton(&ctx);
 
         test_types(&ctx, args, [false, true, true, false]);
@@ -107,32 +106,30 @@ mod test {
         let_slot!(ctx: args);
         let args = args
             .alloc_cons(&ctx, Cons::new(Value::Integer(2), Value::Nil))
+            .quote(&ctx)
             .singleton(&ctx);
 
         test_types(&ctx, args, [false, true, true, true]);
     }
 
     fn test_types(ctx: &MutatorCtx, ref args: Root, bools: [bool; 4]) {
-        let_slot!(ctx: t);
-        let t = t.root(&ctx.common_symbols.t);
-
-        let_slot!(ctx: nil);
-        let nil = nil.nil();
+        let t = ctx.common_symbols.t;
+        let nil = Value::Nil.pack();
 
         let_slot!(ctx: out);
-        let out = nilp(&ctx, out, args.value(), None).unwrap();
-        assert!(out.value() == (if bools[0] { &t } else { &nil }).value());
+        let out = nilp(&ctx, out, args.value()).unwrap();
+        assert!(out.value() == if bools[0] { t } else { nil });
 
         let out = out.slot();
-        let out = consp(&ctx, out, args.value(), None).unwrap();
-        assert!(out.value() == (if bools[1] { &t } else { &nil }).value());
+        let out = consp(&ctx, out, args.value()).unwrap();
+        assert!(out.value() == if bools[1] { t } else { nil });
 
         let out = out.slot();
-        let out = listp(&ctx, out, args.value(), None).unwrap();
-        assert!(out.value() == (if bools[2] { &t } else { &nil }).value());
+        let out = listp(&ctx, out, args.value()).unwrap();
+        assert!(out.value() == if bools[2] { t } else { nil });
 
         let out = out.slot();
-        let out = proper_list_p(&ctx, out, args.value(), None).unwrap();
-        assert!(out.value() == (if bools[3] { &t } else { &nil }).value());
+        let out = proper_list_p(&ctx, out, args.value()).unwrap();
+        assert!(out.value() == if bools[3] { t } else { nil });
     }
 }

@@ -1,6 +1,9 @@
 use std::io::{stdin, stdout, Write};
 
-use crate::builtins::{core, eval::eval};
+use crate::{
+    builtins::{core, eval::rust_eval},
+    value::Value,
+};
 #[macro_use]
 extern crate pest_derive;
 
@@ -27,6 +30,7 @@ fn main() {
     let mut stdout = stdout();
     let_slot!(ctx: scope);
     let scope = core(&ctx, scope);
+    unsafe { println!("Scope: {}", scope.value().unguard()) };
     loop {
         let mut buffer = String::new();
         print!(">>> ");
@@ -36,19 +40,8 @@ fn main() {
         let res = parse::parse(buffer.as_str(), &ctx, parse_out);
         match res {
             Ok(code) => {
-                unsafe {
-                    println!("{}", code.value().unguard());
-                }
-                let_slot!(ctx: eval_arg);
-                let eval_arg = eval_arg
-                    .root(&scope.value())
-                    .singleton(&ctx)
-                    .prepend(&ctx, &code.value());
-
                 let_slot!(ctx: eval_out);
-                // unsafe { println!("{}", eval_arg.value().unguard()); }
-                let arg = eval_arg.value();
-                let res = eval(&ctx, eval_out, arg, None);
+                let res = rust_eval(&ctx, eval_out, code.value(), scope.value());
                 match res {
                     Ok(eval_out) => unsafe {
                         println!("{}", eval_out.value().unguard());

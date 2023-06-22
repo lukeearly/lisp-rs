@@ -39,19 +39,24 @@ impl Arena {
 }
 
 macro_rules! symbol_cache {
-    ($name:ident [$($sym_name:ident),*]) => {
+    ($name:ident [$($sym_name:ident $(: $sym_str:literal)?),*]) => {
         pub struct $name {
             $(pub $sym_name: crate::value::PackedValue<'static>,)*
         }
 
         impl $name {
             pub fn new(arena: &mut Arena) -> Self {
+                $(
+                    let value = crate::util::rust_to_lisp_symbol(stringify!($sym_name));
+                    $(let value = $sym_str;)?
+                    let $sym_name = crate::value::Value::Symbol(unsafe { crate::root::Gc::new(arena.intern(value.into()).as_ref())}).pack();
+                )*
                 Self {
-                    $($sym_name: crate::value::Value::Symbol(unsafe { crate::root::Gc::new(arena.intern(stringify!($sym_name).into()).as_ref())}).pack(),)*
+                    $($sym_name,)*
                 }
             }
         }
     };
 }
 
-symbol_cache!(CommonSymbols [quote, eq, first, rest, cons, t, lambda]);
+symbol_cache!(CommonSymbols [quote, t, lambda, _macro: "macro", closure]);
