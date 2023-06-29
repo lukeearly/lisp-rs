@@ -22,6 +22,9 @@ pkgs.mkShell {
 
     # for profiling
     linuxPackages_latest.perf
+
+    # for debugging
+    lldb
   ]);
   RUST_BACKTRACE = 1;
 }

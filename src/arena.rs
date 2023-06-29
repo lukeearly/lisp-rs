@@ -59,4 +59,4 @@ macro_rules! symbol_cache {
     };
 }
 
-symbol_cache!(CommonSymbols [quote, t, lambda, _macro: "macro", closure]);
+symbol_cache!(CommonSymbols [quote, quasiquote, unquote, t, lambda, _macro: "macro", closure]);

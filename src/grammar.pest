@@ -1,17 +1,25 @@
 top_level = _{ SOI ~ sexp ~ EOI }
 
-sexp = _{ plist | number | string | symbol | quote }
+sexp = _{ plist | number | string | symbol | quote | quasiquote | unquote }
 quote = { "'" ~ quotable }
-quotable = _{ plist | symbol | quote }
+quasiquote = { "`" ~ quotable }
+unquote = { "," ~ quotable }
+quotable = _{ plist | symbol | quote | quasiquote | unquote }
 
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
 
+// pair = { pairable ~ ":" ~ pairable }
+// pairable = _{ plist | number | string | symbol | quote | quasiquote | unquote }
+
 plist = _{ "(" ~ list ~ ")" }
 list = _{ custom_term_list | nil_term_list }
-nil_term_list = { sexp* }
-custom_term_list = { sexp* ~ "." ~ sexp }
+nil_term_list = { list_item* }
+custom_term_list = { list_item* ~ "." ~ list_item }
+list_item = _{ sexp }
 
-symbol = ${ LETTER+ }
+symbol = ${ normal_symbol | special_character }
+normal_symbol = _{ (ASCII_ALPHA) ~ (ASCII_ALPHA | ASCII_DIGIT | special_character)* }
+special_character = _{ "-" | "+" | "*" | "/" | "\\" | "=" | "^" | "&" | "|" | "~" | "!" }
 
 string = { "\"" ~ inner ~ "\"" }
 inner = @{ char* }

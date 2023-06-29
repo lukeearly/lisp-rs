@@ -79,11 +79,27 @@ fn sexp_to_object<'r>(pair: Pair<Rule>, ctx: &MutatorCtx, out: Slot<'r>) -> Root
         //         .intern(inner.as_str().to_string());
         //     PackedPtr::str_ptr(ptr)
         // }
-        Rule::quote => {
+        Rule::quote | Rule::quasiquote | Rule::unquote => {
             let inner = pair.into_inner().next().unwrap();
             let out = sexp_to_object(inner, ctx, out);
-            out.singleton(ctx).prepend(ctx, &ctx.common_symbols.quote)
+            let prefix = match rule {
+                Rule::quote => ctx.common_symbols.quote,
+                Rule::quasiquote => ctx.common_symbols.quasiquote,
+                Rule::unquote => ctx.common_symbols.unquote,
+                _ => unreachable!(),
+            };
+            out.singleton(ctx).prepend(ctx, &prefix)
         }
+        // Rule::pair => {
+        //     let mut iter = pair.into_inner();
+        //     let first = iter.next().unwrap();
+        //     let rest = iter.next().unwrap();
+
+        //     let_slot!(ctx:left);
+        //     let left = sexp_to_object(first, ctx, left);
+        //     let out = sexp_to_object(rest, ctx, out);
+        //     out.prepend(ctx, &left.value())
+        // }
         _ => {
             println!("unimplemented rule: {:?}", pair.as_rule());
             // let ptr = ctx.string_arena.lock().unwrap().intern("nil".to_string());

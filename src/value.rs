@@ -1,9 +1,10 @@
 use std::{marker::PhantomData, ops::Deref, ptr::NonNull};
 
 use crate::{
-    builtins::{BuiltinFunction, BuiltinMacro},
+    builtins::BuiltinFunction,
     object::{self, LString, PackedPtr, UnpackedPtr},
     root::Gc,
+    util::construct_non_null,
 };
 
 // pub struct TypedObj<T> {
@@ -49,10 +50,10 @@ impl<'guard> Value<'guard> {
         match unpacked {
             UnpackedPtr::Integer(n) => Self::Integer(n),
             UnpackedPtr::Cons(ptr) => Self::Cons(Gc::new(
-                NonNull::new_unchecked(ptr.as_ptr() as *mut Cons).as_ref(),
+                construct_non_null(ptr.as_ptr() as *mut Cons).as_ref(),
             )),
             UnpackedPtr::Object(ptr) => Self::Object(Gc::new(
-                NonNull::new_unchecked(ptr.as_ptr() as *mut Cons).as_ref(),
+                construct_non_null(ptr.as_ptr() as *mut Cons).as_ref(),
             )),
             UnpackedPtr::Nil => Self::Nil,
             UnpackedPtr::Symbol(ptr) => Self::Symbol(Gc::new(ptr.as_ref())),
@@ -63,11 +64,11 @@ impl<'guard> Value<'guard> {
     pub unsafe fn to_unpacked_ptr(&self) -> UnpackedPtr {
         match self {
             Value::Integer(n) => UnpackedPtr::Integer(*n),
-            Value::Cons(ptr) => UnpackedPtr::Cons(NonNull::new_unchecked(
+            Value::Cons(ptr) => UnpackedPtr::Cons(construct_non_null(
                 ptr.as_raw().as_ptr() as *mut object::RawCons
             )),
-            Value::Object(ptr) => UnpackedPtr::Object(NonNull::new_unchecked(
-                ptr.as_raw().as_ptr() as *mut object::RawCons,
+            Value::Object(ptr) => UnpackedPtr::Object(construct_non_null(
+                ptr.as_raw().as_ptr() as *mut object::RawCons
             )),
             Value::Symbol(ptr) => UnpackedPtr::Symbol(ptr.as_raw()),
             Value::Function(ptr) => UnpackedPtr::Function(*ptr),

@@ -5,6 +5,7 @@ use crate::{
 };
 
 use super::{
+    func::rust_foldr,
     unpack::{unpack_cons, unpack_int},
     BuiltinError,
 };
@@ -52,4 +53,8 @@ def_builtin!(len(ctx, out) [list: listp] {
         list = cons.rest;
     }
     Ok(out.root(&Value::Integer(n).pack()))
+});
+
+def_builtin!(concat(ctx, out) [left, right] {
+    rust_foldr(ctx, out, Value::Function(cons).pack(), left, right)
 });

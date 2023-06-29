@@ -9,3 +9,6 @@ edition = "2018"
 pest = "2.6.0"
 pest_derive = "2.6.0"
 paste = "1.0.12"
+
+[profile.release]
+debug = true

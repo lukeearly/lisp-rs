@@ -42,7 +42,7 @@ impl Display for PackedPtr {
                 write!(f, "()")
             }
             Function(_) => write!(f, "<BUILTIN>"),
-            Object(_) => write!(f, "<OBJECT>"),
+            Object(ptr) => write!(f, "<OBJECT {}>", unsafe { *(ptr.as_ptr()) }.first),
         }
     }
 }

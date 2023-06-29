@@ -7,7 +7,7 @@ use std::{
     slice, string,
 };
 
-use crate::builtins::{BuiltinFunction, BuiltinMacro};
+use crate::{builtins::BuiltinFunction, util::construct_non_null};
 
 pub const OBJECT_ALIGNMENT: usize = 8;
 
@@ -22,7 +22,6 @@ pub union PackedPtr {
     integer: isize,
     cons: NonNull<RawCons>,
     lstr: NonNull<LString>,
-    mac: BuiltinMacro,
     fun: BuiltinFunction,
 }
 
@@ -80,10 +79,6 @@ impl PackedPtr {
         PackedPtr { tag: self.tag & !7 }.fun
     }
 
-    unsafe fn get_macro_ptr(&self) -> BuiltinMacro {
-        PackedPtr { tag: self.tag & !7 }.mac
-    }
-
     pub fn tag_type(&self) -> TagType {
         let tag = unsafe { self.tag };
         match tag {
@@ -115,11 +110,7 @@ impl PackedPtr {
         use crate::object::UnpackedPtr::*;
         unsafe {
             match self.unpack() {
-                Cons(ptr) => vec![(
-                    NonNull::new_unchecked(ptr.as_ptr() as *mut u8),
-                    size_of::<crate::object::RawCons>(),
-                )],
-                Object(ptr) => vec![(
+                Cons(ptr) | Object(ptr) => vec![(
                     NonNull::new_unchecked(ptr.as_ptr() as *mut u8),
                     size_of::<crate::object::RawCons>(),
                 )],
@@ -128,25 +119,14 @@ impl PackedPtr {
         }
     }
 
-    pub fn obj_ptrs(&self) -> Vec<NonNull<PackedPtr>> {
+    pub fn obj_ptrs(&self) -> Vec<PackedPtr> {
         use crate::object::UnpackedPtr::*;
         unsafe {
             match self.unpack() {
-                Cons(ptr) => {
+                Cons(ptr) | Object(ptr) => {
                     let cons = *ptr.as_ptr();
 
-                    vec![
-                        NonNull::new_unchecked(&cons.first as *const PackedPtr as *mut PackedPtr),
-                        NonNull::new_unchecked(&cons.rest as *const PackedPtr as *mut PackedPtr),
-                    ]
-                }
-                Object(ptr) => {
-                    let cons = *ptr.as_ptr();
-
-                    vec![
-                        NonNull::new_unchecked(&cons.first as *const PackedPtr as *mut PackedPtr),
-                        NonNull::new_unchecked(&cons.rest as *const PackedPtr as *mut PackedPtr),
-                    ]
+                    vec![cons.first, cons.rest]
                 }
                 _ => vec![],
             }
@@ -188,7 +168,7 @@ pub enum TagType {
     // Closure,
     // Map,
     // (Integer = 0b111)
-    Object = 0b111,
+    Object = 0b100,
     Nil,
 }
 

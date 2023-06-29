@@ -1,8 +1,8 @@
-use std::{cell::Cell, marker::PhantomData, ops::Deref, pin::Pin, ptr::NonNull};
+use std::{cell::Cell, fmt::Display, marker::PhantomData, ops::Deref, pin::Pin, ptr::NonNull};
 
 use crate::{
     alloc::ImmixMutator,
-    builtins::{BuiltinFunction, BuiltinMacro},
+    builtins::BuiltinFunction,
     heap::LAlloc,
     let_slot,
     linked_list::{LinkedList, LinkedListIter, LinkedListNode},
@@ -37,6 +37,19 @@ impl<'slot> Slot<'slot> {
         let root = Root { slot: self };
         root.slot.0.ptr.set(unsafe { ptr.unguard() });
         root
+    }
+
+    pub fn alloc_obj(self, ctx: &MutatorCtx, cons: Cons) -> Root<'slot> {
+        ctx.alloc
+            .object(
+                |ptr| {
+                    self.root_raw(PackedPtr::obj_ptr(unsafe {
+                        NonNull::new_unchecked(ptr.as_ptr() as *mut RawCons)
+                    }))
+                },
+                cons,
+            )
+            .unwrap()
     }
 
     pub fn alloc_cons(self, ctx: &MutatorCtx, cons: Cons) -> Root<'slot> {
@@ -132,12 +145,24 @@ impl<'slot> Root<'slot> {
         })
     }
 
+    pub fn prepend_obj(self, ctx: &MutatorCtx, val: &PackedValue) -> Root<'slot> {
+        self.map(|slot, root| {
+            slot.alloc_obj(
+                ctx,
+                Cons {
+                    first: val.clone(),
+                    rest: root.value(),
+                },
+            )
+        })
+    }
+
     pub fn quote(self, ctx: &MutatorCtx) -> Root<'slot> {
         self.singleton(ctx).prepend(ctx, &ctx.common_symbols.quote)
     }
 
     pub fn _macro(self, ctx: &MutatorCtx) -> Root<'slot> {
-        self.prepend(ctx, &ctx.common_symbols._macro)
+        self.prepend_obj(ctx, &ctx.common_symbols._macro)
     }
 }
 
@@ -163,6 +188,12 @@ impl<'guard, T> Deref for Gc<'guard, T> {
         self.ptr
     }
 }
+
+// impl<'guard, T> Display for Gc<'guard, T> {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         write!(f, "Gc({:?})", self.ptr as *const T)
+//     }
+// }
 
 pub struct RootList(Pin<Box<LinkedList<RootNode>>>);
 

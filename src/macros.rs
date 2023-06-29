@@ -1,8 +1,8 @@
 #[macro_export]
 macro_rules! lisp_read {
-    ($local:expr, $expression:tt) => {{
+    ($ctx:expr, $out:expr, { $expression:tt }) => {{
         use crate::{parse, thread};
-        parse::parse(stringify!($expression).into(), &mut $local)
+        parse::parse(stringify!($expression).into(), $ctx, $out)
     }};
 }
 
@@ -68,9 +68,10 @@ macro_rules! def_builtin {
             }
 
             #[allow(unused_mut)]
+            #[allow(unused_variables)]
             pub fn [<rust_ $name>]<'o, 'a>($($ctx: &'o crate::thread::MutatorCtx,)? $(mut $out: crate::root::Slot<'o>,)? $($(
                 mut $arg_name: crate::value::PackedValue<'a>,
-            )* $($rest: crate::value::PackedValue<'a>,)?)?) -> crate::builtins::BuiltinResult<'o> {
+            )* $(mut $rest: crate::value::PackedValue<'a>,)?)?) -> crate::builtins::BuiltinResult<'o> {
                 #[warn(unused_assignments)]
                 #[warn(unused_mut)]
                 #[warn(unused_variables)]

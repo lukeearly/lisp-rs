@@ -1,5 +1,8 @@
+use crate::builtins::alist::rust_assq;
 use crate::builtins::func::rust_map_eval;
+use crate::builtins::quasiquote::rust_eval_quasiquote;
 use crate::builtins::unpack::unpack_cons;
+use crate::object::TagType;
 use crate::value::Value;
 use crate::{def_builtin, let_slot};
 
@@ -9,6 +12,7 @@ use super::types::rust::*;
 use super::BuiltinError;
 
 def_builtin!(eval(ctx, out) [code, scope: listp] {
+    // unsafe { println!("EVAL: {}", code.unguard()); };
     match code.unpack() {
         Value::Cons(ptr) => {
             if !proper_list_p(code) {
@@ -20,12 +24,14 @@ def_builtin!(eval(ctx, out) [code, scope: listp] {
 
             if left == ctx.common_symbols.quote {
                 return Ok(out.root(&unpack_cons(right).map_err(|_| BuiltinError::NotEnoughArguments { string: "quote".into(), expected: 1, provided: 0 })?.first));
+            } else if left == ctx.common_symbols.quasiquote {
+                return rust_eval_quasiquote(ctx, out, scope, unpack_cons(right).map_err(|_| BuiltinError::NotEnoughArguments { string: "quote".into(), expected: 1, provided: 0 })?.first, Value::Integer(1).pack());
             }
 
             let_slot!(ctx:left_out);
             let left_out = rust_eval(ctx, left_out, left, scope)?;
 
-            if let Value::Cons(ptr) = left_out.value().unpack() {
+            if let Value::Object(ptr) = left_out.value().unpack() {
                 if ptr.first == ctx.common_symbols._macro {
                     let_slot!(ctx:macro_arg);
                     let arg_root = macro_arg.root(&right).prepend(ctx, &scope);
@@ -36,23 +42,24 @@ def_builtin!(eval(ctx, out) [code, scope: listp] {
             let_slot!(ctx:map_out);
             let map_out = rust_map_eval(ctx, map_out, scope, right)?;
 
-            rust_apply(ctx, out, left_out.value(), map_out.value())
+            let res = rust_apply(ctx, out, left_out.value(), map_out.value());
+
+            if res.is_err() {
+                unsafe { println!("{}", left.unguard()) }
+                // unsafe { println!("{}", left_out.value().unguard()) }
+            }
+
+            res
         }
         Value::Symbol(ptr) => {
-            let_slot!(ctx:assq_args);
-            let_slot!(ctx:assq_code);
-
-            let assq_code = assq_code.root(&code);
-
-            let assq_args = assq_args.root(&scope).singleton(ctx);
-            let assq_args = assq_args.prepend(ctx, &assq_code.value());
-            drop(assq_code);
-
             let_slot!(ctx:assq_out);
-            let assq_out = assq(ctx, assq_out, assq_args.value())?;
+            let assq_out = rust_assq(ctx, assq_out, code, scope)?;
             match assq_out.value().unpack() {
                 Value::Cons(ptr) => Ok(out.root(&ptr.rest)),
-                _ => Err(BuiltinError::UndefinedSymbol(ptr.to_string()))
+                _ => {
+                    // unsafe { println!("scope: {}", scope.unguard()) }
+                    Err(BuiltinError::UndefinedSymbol(ptr.to_string()))
+                }
             }
         }
         Value::Nil | Value::Integer(_) | Value::Function(_) | Value::Object(_) => {
@@ -62,17 +69,21 @@ def_builtin!(eval(ctx, out) [code, scope: listp] {
     }
 });
 
-def_builtin!(apply(ctx, out) [left, &rest right] {
+def_builtin!(apply(ctx, out) [left, right] {
     match left.unpack() {
         Value::Function(fn_ptr) => fn_ptr(&ctx, out, right.clone()),
-        Value::Cons(cons) => {
+        Value::Object(cons) => {
             if cons.first == ctx.common_symbols.closure {
                 rust_closure_apply(ctx, out, cons.rest, right)
             } else {
-                Err(BuiltinError::NotCallable)
+                Err(BuiltinError::NotCallable("apply: uncallable object".into(), TagType::Object))
             }
         },
-        _ => Err(BuiltinError::NotCallable)
+        _ => {
+            // unsafe { println!("{}", left.unguard()) }
+            // unsafe { println!("{}", right.unguard()) }
+            Err(BuiltinError::NotCallable("apply: uncallable object".into(), unsafe { left.unguard().tag_type() }))
+        }
     }
 
     // } else if *left == ctx.common_symbols.first {

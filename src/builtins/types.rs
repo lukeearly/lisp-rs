@@ -19,7 +19,7 @@ macro_rules! generate_predicate {
     };
 }
 
-generate_predicate!(consp, nilp, listp, proper_list_p);
+generate_predicate!(consp, nilp, listp, proper_list_p, objp);
 
 pub mod rust {
     use crate::{
@@ -60,6 +60,20 @@ pub mod rust {
             true
         } else {
             false
+        }
+    }
+
+    pub fn objp(arg: PackedValue) -> bool {
+        match arg.unpack() {
+            Value::Object(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn tagp(tag: PackedValue, arg: PackedValue) -> bool {
+        match arg.unpack() {
+            Value::Object(cons) => cons.first == tag,
+            _ => false,
         }
     }
 }

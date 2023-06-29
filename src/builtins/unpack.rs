@@ -11,6 +11,13 @@ pub fn unpack_cons<'guard>(arg: PackedValue<'guard>) -> Result<Gc<'guard, Cons<'
     }
 }
 
+pub fn unpack_obj<'guard>(arg: PackedValue<'guard>) -> Result<Gc<'guard, Cons<'guard>>, TagType> {
+    match arg.unpack() {
+        Value::Object(gc) => Ok(gc),
+        _ => Err(unsafe { arg.unguard().tag_type() }),
+    }
+}
+
 pub fn unpack_int<'guard>(arg: PackedValue<'guard>) -> Result<isize, TagType> {
     match arg.unpack() {
         Value::Integer(n) => Ok(n),

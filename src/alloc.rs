@@ -48,7 +48,9 @@ impl Block {
             if ptr.is_null() {
                 Err(AllocError::OutOfMemory)
             } else {
-                Ok(Block { ptr })
+                let mut block = Block { ptr };
+                block.reset_marks();
+                Ok(block)
             }
         }
     }
@@ -87,22 +89,23 @@ impl Block {
     }
 
     unsafe fn unchecked_line_live(&self, i: usize) -> bool {
-        *self.ptr.add(i) != 0
+        *self.ptr.add(IMMIX_USABLE_SIZE + i) != 0
     }
 
     unsafe fn unchecked_set_line_live(&mut self, i: usize, live: bool) {
-        *self.ptr.add(i) = if live { 1 } else { 0 };
+        *self.ptr.add(IMMIX_USABLE_SIZE + i) = if live { 1 } else { 0 };
     }
 
     fn block_live(&self) -> bool {
-        unsafe { *self.ptr.add(IMMIX_LINES + 1) != 0 }
+        unsafe { *self.ptr.add(IMMIX_USABLE_SIZE + IMMIX_LINES) != 0 }
     }
 
     fn set_block_live(&mut self, live: bool) {
-        unsafe { *self.ptr.add(IMMIX_LINES + 1) = if live { 1 } else { 0 } };
+        unsafe { *self.ptr.add(IMMIX_USABLE_SIZE + IMMIX_LINES) = if live { 1 } else { 0 } };
     }
 
     fn reset_marks(&mut self) {
+        self.set_block_live(false);
         for i in 0..IMMIX_LINES {
             unsafe { self.unchecked_set_line_live(i, false) };
         }
@@ -161,12 +164,15 @@ impl ImmixBlockHandler {
     }
 
     fn from_block(block: Block, min_size: usize, start_line: usize) -> Option<Self> {
-        if !block.block_live() {
-            return Some(unsafe { Self::from_block_and_lines(block, 0, IMMIX_LINES) });
+        // println!("BL: {:?} {}", block, block.block_live());
+
+        if !block.block_live() && (IMMIX_LINES - start_line) * IMMIX_LINE_SIZE >= min_size {
+            return Some(unsafe { Self::from_block_and_lines(block, start_line, IMMIX_LINES) });
         }
 
         let mut start = None;
         for i in start_line..IMMIX_LINES {
+            // println!("FB: {:?} {} {}", block, i, block.line_live(i));
             if block.line_live(i) {
                 match start {
                     Some(j) => {
@@ -185,18 +191,38 @@ impl ImmixBlockHandler {
                 }
             }
         }
-        None
+
+        match start {
+            Some(j) => {
+                if (IMMIX_LINES - j) * IMMIX_LINE_SIZE > min_size {
+                    Some(unsafe { Self::from_block_and_lines(block, j, IMMIX_LINES) })
+                } else {
+                    None
+                }
+            }
+            None => None,
+        }
     }
 
-    fn mark_medium_object_on_alloc(&mut self, size: usize) {
+    fn mark_medium_size(&mut self, size: usize) {
+        if size == 0 {
+            return;
+        }
+
         let (b, l, x) = unsafe { Block::block_from_ptr(self.bump.cursor.as_ptr()) };
         assert_eq!(b, self.block);
 
         let num_lines = (x + size - 1) / IMMIX_LINE_SIZE + 1;
 
+        self.block.set_block_live(true);
+
         for i in 0..num_lines {
             self.block.set_line_live(l + i, true);
         }
+    }
+
+    fn mark_bump_range(&mut self) {
+        self.mark_medium_size(self.bump.free_size())
     }
 }
 
@@ -238,6 +264,7 @@ impl GlobalImmixAllocator {
     ) -> Result<ImmixBlockHandler, AllocError> {
         let mut blocks = self.blocks.lock().unwrap();
 
+        // println!("requesting block");
         let mut item = None;
         for (i, b) in blocks.iter().enumerate() {
             if let Some(bh) = ImmixBlockHandler::from_block(b.clone(), size, 0) {
@@ -301,7 +328,7 @@ impl GlobalImmixAllocator {
 
         assert!(start_block == end_block);
         assert!(end_line < IMMIX_LINES);
-        for line in start_line..end_line {
+        for line in start_line..=end_line {
             unsafe {
                 start_block.unchecked_set_line_live(line, true);
             }
@@ -309,7 +336,8 @@ impl GlobalImmixAllocator {
         }
     }
 
-    fn gc(&mut self) {
+    pub fn gc(&mut self) {
+        // println!("GC");
         let mut global_blocks = self.blocks.lock().unwrap();
         let locals = self.local_lists.lock().unwrap();
         let mut multilock = unsafe { Self::lock_all_lists(&locals) };
@@ -326,8 +354,6 @@ impl GlobalImmixAllocator {
                 b.reset_marks();
             }
 
-            l.head.block.set_block_live(true);
-
             for r in l.roots.cursor() {
                 if seen.insert(r.ptr()) {
                     stack.push(r.ptr());
@@ -335,32 +361,47 @@ impl GlobalImmixAllocator {
             }
         }
 
-        while !stack.is_empty() {
-            let obj = stack.remove(0);
+        // println!("unique roots: {}", seen.len());
+        let mut used_space = 0usize;
 
+        while let Some(obj) = stack.pop() {
             for (ptr, size) in obj.heap_ptrs() {
                 unsafe { Self::mark_ptr(ptr.as_ptr() as *mut u8, size) };
+                used_space += size;
             }
 
-            for ptr in obj.obj_ptrs() {
-                let inner_obj = unsafe { *ptr.as_ptr() };
+            for inner_obj in obj.obj_ptrs() {
                 if seen.insert(inner_obj) {
                     stack.push(inner_obj);
                 }
             }
         }
 
+        // println!("seen: {}", seen.len());
+
+        let mut live_blocks = global_blocks.iter().filter(|b| b.block_live()).count();
+
         let mut dead_blocks = vec![];
         for l in multilock.iter_mut() {
+            l.head.mark_bump_range();
+            l.start_recycle = true;
+
             unsafe { l.blocks.base_mut() }.retain(|b| {
                 if b.block_live() {
+                    live_blocks += 1;
                     true
                 } else {
                     dead_blocks.push(b.clone());
                     false
                 }
-            })
+            });
         }
+
+        let total_space = live_blocks * IMMIX_BLOCK_SIZE;
+        // println!("live blocks: {live_blocks}");
+        // println!("total space: {total_space}");
+        // println!("utilized space: {used_space}");
+        // println!("efficiency: {}", used_space as f64 / total_space as f64);
 
         drop(multilock);
         drop(global_blocks);
@@ -374,20 +415,15 @@ struct ImmixMutatorState {
     head: ImmixBlockHandler,
     blocks: SortedVec<Block>,
     roots: RootList,
+    start_recycle: bool,
 }
 
 impl ImmixMutatorState {
-    fn find_hole(&mut self, size: usize) -> Option<ImmixBlockHandler> {
-        let (block, line, offset) =
-            unsafe { Block::block_from_ptr(self.head.bump.cursor.as_ptr().offset(-1)) };
-        assert_eq!(block, self.head.block);
-
-        if let Some(bh) = ImmixBlockHandler::from_block(self.head.block.clone(), size, line + 1) {
-            return Some(bh);
-        }
-        // right point to avoid repeating head and moving backwards
-        let idx = self.blocks.right_point(&self.head.block);
-        for b in self.blocks.base().iter().skip(idx) {
+    fn find_hole<'a, I: Iterator<Item = &'a Block>>(
+        iter: I,
+        size: usize,
+    ) -> Option<ImmixBlockHandler> {
+        for b in iter {
             if let Some(bh) = ImmixBlockHandler::from_block(b.clone(), size, 0) {
                 return Some(bh);
             }
@@ -395,20 +431,66 @@ impl ImmixMutatorState {
         None
     }
 
+    fn try_recycle<T>(&mut self, size: usize) -> Option<NonNull<T>> {
+        if size < MEDIUM_OBJECT_SIZE {
+            self.start_recycle = false;
+        }
+        let iter = self.blocks.base().iter();
+        if let Some(bh) = Self::find_hole(iter, size) {
+            unsafe { Some(self.alloc_head_or_mark(size, bh)) }
+        } else {
+            None
+        }
+    }
+
+    fn alloc_forwards<T>(&mut self, size: usize) -> Option<NonNull<T>> {
+        let (block, mut line, offset) =
+            unsafe { Block::block_from_ptr(self.head.bump.cursor.as_ptr()) };
+        assert_eq!(block, self.head.block);
+
+        if offset != 0 {
+            line += 1;
+        }
+
+        if let Some(bh) = ImmixBlockHandler::from_block(self.head.block.clone(), size, line) {
+            unsafe { Some(self.alloc_head_or_mark(size, bh)) }
+        } else {
+            // right point to avoid repeating head and moving backwards
+            let idx = self.blocks.right_point(&self.head.block);
+            let iter = self.blocks.base().iter().skip(idx);
+            if let Some(bh) = Self::find_hole(iter, size) {
+                unsafe { Some(self.alloc_head_or_mark(size, bh)) }
+            } else {
+                None
+            }
+        }
+    }
+
     fn set_head(&mut self, bh: ImmixBlockHandler) {
         self.head = bh;
     }
 
-    fn try_allocate_local<T>(&mut self, size: usize) -> Option<NonNull<T>> {
-        if let Some(mut bh) = self.find_hole(size) {
-            if size < MEDIUM_OBJECT_SIZE {
-                self.set_head(bh);
-            } else {
-                bh.mark_medium_object_on_alloc(size);
-            }
-            unsafe { Some(self.head.bump.unchecked_bump(size)) }
+    // unsafe because of unchecked bump
+    unsafe fn alloc_head_or_mark<T>(
+        &mut self,
+        size: usize,
+        mut bh: ImmixBlockHandler,
+    ) -> NonNull<T> {
+        if size < MEDIUM_OBJECT_SIZE {
+            self.set_head(bh);
+            unsafe { self.head.bump.unchecked_bump(size) }
         } else {
-            None
+            bh.mark_medium_size(size);
+            unsafe { bh.bump.unchecked_bump(size) }
+        }
+    }
+
+    fn try_allocate_local<T>(&mut self, size: usize) -> Option<NonNull<T>> {
+        if self.start_recycle {
+            // println!("RECYCLE");
+            self.try_recycle(size)
+        } else {
+            self.alloc_forwards(size)
         }
     }
 }
@@ -421,10 +503,13 @@ pub struct ImmixMutator<'a> {
 impl<'a> ImmixMutator<'a> {
     pub fn new(global: &'a Mutex<GlobalImmixAllocator>) -> Self {
         let mut lock = global.lock().unwrap();
+        let head = lock.request_block(IMMIX_MIN_STARTING_SIZE, false).unwrap();
+        let block = head.block.clone();
         let local_state = Arc::new(Mutex::new(ImmixMutatorState {
-            head: lock.request_block(IMMIX_MIN_STARTING_SIZE, false).unwrap(),
-            blocks: SortedVec::new(),
+            head,
+            blocks: unsafe { SortedVec::from_sorted_vec(vec![block]) },
             roots: RootList::new(),
+            start_recycle: false,
         }));
         lock.add_local_list(local_state.clone());
         ImmixMutator {
@@ -446,9 +531,16 @@ impl<'a> LAlloc for ImmixMutator<'a> {
         }
 
         let mut list = self.local_state.lock().unwrap();
+
         if list.head.bump.free_size() >= size {
+            // let (block, line, offset) =
+            // unsafe { Block::block_from_ptr(list.head.bump.cursor.as_ptr()) };
+            // if offset == 0 || offset + size >= IMMIX_LINE_SIZE {
+            // println!("BUMP: {block:?} {line} {offset} {:?}", list.blocks.base());
+            // }
             unsafe { Ok(transformer(list.head.bump.unchecked_bump(size))) }
         } else if let Some(ptr) = list.try_allocate_local(size) {
+            // println!("SKIP: 0x{:x} {:?}", ptr.as_ptr() as usize, list.blocks.base());
             Ok(transformer(ptr))
         } else {
             drop(list);
@@ -462,10 +554,10 @@ impl<'a> LAlloc for ImmixMutator<'a> {
             }
             if let Ok(block_handler) = res {
                 let mut list = self.local_state.lock().unwrap();
-                let old_head = list.head.block.clone();
-                list.blocks.insert(old_head);
-                list.head = block_handler;
-                unsafe { Ok(transformer(list.head.bump.unchecked_bump(size))) }
+                list.blocks.insert(block_handler.block.clone());
+                Ok(transformer(unsafe {
+                    list.alloc_head_or_mark(size, block_handler)
+                }))
             } else {
                 Err(res.unwrap_err())
             }
