@@ -39,7 +39,11 @@ pub type BuiltinFunction =
     for<'o, 'a> fn(&'o MutatorCtx, Slot<'o>, PackedValue<'a>) -> BuiltinResult<'o>;
 
 macro_rules! generate_scope {
-    ($name:ident functions: [$($function_mod:ident :: $function:ident $(/ $function_name:ident)?),*] macros: [$($macro_mod:ident :: $macro:ident $(/ $macro_name:ident)?),*]) => {
+    ($name:ident
+        functions: [$($function_mod:ident :: $function:ident $(/ $function_name:ident)?),*]
+        macros: [$($macro_mod:ident :: $macro:ident $(/ $macro_name:ident)?),*]
+        fexprs: [$($fexpr_mod:ident :: $fexpr:ident $(/ $fexpr_name:ident)?),*]
+    ) => {
         pub fn $name<'r>(ctx: &crate::thread::MutatorCtx, out: crate::root::Slot<'r>) -> crate::root::Root<'r> {
             let out = out.nil();
             crate::let_slot!(ctx:assoc);
@@ -66,6 +70,16 @@ macro_rules! generate_scope {
                 let assoc = unsafe { assoc.slot().function($macro_mod::$macro) }._macro(ctx).prepend(ctx, &name.value());
                 let out = out.prepend(ctx, &assoc.value());
             )*
+            $(
+                #[allow(unused_variables)]
+                let fexpr_name = stringify!($fexpr).rsplit("::").next().unwrap();
+                $(let fexpr_name = stringify!($fexpr_name);)?
+                let fexpr_name = crate::util::rust_to_lisp_symbol(fexpr_name);
+
+                let name = name.slot().intern(ctx, fexpr_name);
+                let assoc = unsafe { assoc.slot().function($fexpr_mod::$fexpr) }.fexpr(ctx).prepend(ctx, &name.value());
+                let out = out.prepend(ctx, &assoc.value());
+            )*
             out
         }
     }
@@ -85,6 +99,10 @@ generate_scope!(core
     ]
 
     macros: [
+
+    ]
+
+    fexprs: [
         closure::closure/lambda,
         control::bind, control::bind_star
     ]

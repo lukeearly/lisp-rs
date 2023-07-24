@@ -161,6 +161,10 @@ impl<'slot> Root<'slot> {
         self.singleton(ctx).prepend(ctx, &ctx.common_symbols.quote)
     }
 
+    pub fn fexpr(self, ctx: &MutatorCtx) -> Root<'slot> {
+        self.prepend_obj(ctx, &ctx.common_symbols.fexpr)
+    }
+
     pub fn _macro(self, ctx: &MutatorCtx) -> Root<'slot> {
         self.prepend_obj(ctx, &ctx.common_symbols._macro)
     }

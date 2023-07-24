@@ -32,10 +32,15 @@ def_builtin!(eval(ctx, out) [code, scope: listp] {
             let left_out = rust_eval(ctx, left_out, left, scope)?;
 
             if let Value::Object(ptr) = left_out.value().unpack() {
-                if ptr.first == ctx.common_symbols._macro {
-                    let_slot!(ctx:macro_arg);
-                    let arg_root = macro_arg.root(&right).prepend(ctx, &scope);
+                if ptr.first == ctx.common_symbols.fexpr {
+                    let_slot!(ctx:fexpr_arg);
+                    let arg_root = fexpr_arg.root(&right).prepend(ctx, &scope);
                     return rust_apply(ctx, out, ptr.rest, arg_root.value());
+                } else if ptr.first == ctx.common_symbols._macro {
+                    let_slot!(ctx:macro_out);
+                    let macro_out = rust_apply(ctx, macro_out, ptr.rest, right)?;
+                    unsafe { println!("{}", macro_out.value().unguard()) }
+                    return rust_eval(ctx, out, macro_out.value(), scope);
                 }
             }
 
